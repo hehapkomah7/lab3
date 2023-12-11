@@ -1,0 +1,456 @@
+package lab3;
+
+import org.jfree.chart.ChartFactory;
+import org.jfree.chart.ChartUtils;
+import org.jfree.chart.JFreeChart;
+import org.jfree.chart.plot.PlotOrientation;
+import org.jfree.data.category.DefaultCategoryDataset;
+import org.jfree.data.xy.XYSeries;
+import org.jfree.data.xy.XYSeriesCollection;
+
+import java.io.File;
+import java.io.IOException;
+import java.text.DecimalFormat;
+import java.util.Arrays;
+import java.util.function.ToDoubleBiFunction;
+import java.util.function.ToDoubleFunction;
+
+import static lab1.Main.sidеDiagonal;
+import static lab1.Main.init;
+
+class Utils {
+    static double[] matrixXvector(double[][] mat, double[] vec) {
+        double[] result = new double[mat.length];
+        for (int i = 0; i < vec.length; i++) {
+            for (int j = 0; j < vec.length; j++) {
+                result[i] += mat[i][j] * vec[j];
+            }
+        }
+        return result;
+    }
+
+    static double dotProduct(double[] v1, double[] v2) {
+        double result = 0;
+        for (int i = 0; i < v1.length; i++) {
+            result += v1[i] * v2[i];
+        }
+        return result;
+    }
+
+    static double[] azSubF(double[][] matA, double[] vecZ, double[] vecF) {
+        double[] result = matrixXvector(matA, vecZ);
+        for (int i = 0; i < vecZ.length; i++) {
+            result[i] -= vecF[i];
+        }
+        return result;
+    }
+
+    static double[] rk(double[][] matA, double[] vecZ, double[] vecF) {
+        double[] result = azSubF(matA, vecZ, vecF);
+        for (int i = 0; i < vecZ.length; i++) {
+            result[i] = -result[i];
+        }
+        return result;
+    }
+}
+
+public class Lab3 {
+    public final int steps;
+    public final double a;
+    public final double b;
+    public final double[][] matA;
+    public final double[][] matVs;
+    public final double[] vecF;
+
+    public final ToDoubleBiFunction<Double, Double> f = (x, y) -> 0.4 * Math.sin(x) * (3.0 * x * x - 4);
+    public final ToDoubleBiFunction<Double, Double> phi = (x, y) -> x * x * Math.sin(y);
+
+    public final ToDoubleFunction<double[]> vectorNorm = vec -> Math.sqrt(Utils.dotProduct(vec, vec));
+
+    public final ToDoubleBiFunction<Integer, Integer> vk = (n, k) -> Math.cos((2 * k - 1) * Math.PI / (2 * n));
+
+    public static void main(String[] args) {
+        new Lab3(5, 0.8, 1.2).run();
+    }
+
+    public Lab3(int steps, double a, double b) {
+        this.steps = steps;
+        this.a = a;
+        this.b = b;
+        this.matA = createA(steps);
+        this.matVs = createVs(steps);
+        this.vecF = calculateF(steps);
+        init(this);
+
+//        System.out.println(matrixToString(this.matA));
+    }
+
+    public void run() {
+//        final double descentEpsilon = 0.01;
+//        steepestDescent(descentEpsilon);
+
+        final double residualEpsilon = 1e-8;
+        final double[] residualResult = minResidualMethod(residualEpsilon);
+
+        final double eigenEpsilon = 1e-8;
+        final double lambdaAMax = findMaxEigenValue(this.matA, eigenEpsilon);
+
+        final double[][] matB = createB(lambdaAMax);
+        final double lambdaBMax = findMaxEigenValue(matB, eigenEpsilon);
+        final double lambdaAMin = lambdaAMax + 1.0 - lambdaBMax;
+
+        System.out.println("lambdas:");
+        System.out.println("max: " + lambdaAMax);
+        System.out.println("min: " + lambdaAMin);
+        System.out.println();
+
+        final double richardsonEpsilon = 1e-3;
+        final double[] richardsonResult = richardsonMethod(lambdaAMax, lambdaAMin, richardsonEpsilon);
+
+//        System.out.println("↓↓ минимальные невязки ↓↓");
+//        System.out.println(Arrays.toString(residualResult));
+//        System.out.println(Arrays.toString(richardsonResult));
+//        System.out.println("↑↑ ричардсон ↑↑");
+
+//        System.out.println("↓↓ минимальные невязки ↓↓");
+        double[][] residualSquare = transformResult(residualResult);
+//        System.out.println(Arrays.deepToString(residualSquare));
+//        System.out.println(matrixToString(residualSquare));
+//        System.out.println("↓↓ ричардсон ↓↓");
+        double[][] richardsonSquare = transformResult(richardsonResult);
+//        System.out.println(Arrays.deepToString(richardsonSquare));
+//        System.out.println(matrixToString(richardsonSquare));
+
+//        System.out.println("↓↓ phi ↓↓");
+        double[][] phiSquare = phiMatrix();
+//        System.out.println(matrixToString(phiSquare));
+
+//        вывести phi на линии,
+//        вывести phi+погрешность на линии (типа для разных аппроксимаций),
+//        вывести графики
+
+        System.out.println("↓↓ phi line ↓↓");
+        double[] phiLine = sideDiagonal(phiSquare);
+        System.out.println(vecToString(phiLine));
+
+        System.out.println("==============================================");
+
+        System.out.println("↓↓ residual line ↓↓");
+        double[] residualLine = sidеDiagonal(residualSquare);
+        System.out.println(vecToString(residualLine));
+        System.out.println("delta:");
+        System.out.println(vecDeltaString(phiLine, residualLine));
+
+        System.out.println("==============================================");
+
+        System.out.println("↓↓ richardson line ↓↓");
+        double[] richardsonLine = sidеDiagonal(richardsonSquare);
+        System.out.println(vecToString(richardsonLine));
+        System.out.println("delta:");
+        System.out.println(vecDeltaString(phiLine, richardsonLine));
+
+        plotComparison("residual", residualLine);
+        plotComparison("richardson", richardsonLine);
+    }
+
+    public void plotComparison(String name, double[] vec) {
+        double h = 1.0 / steps;
+
+        XYSeries vecSeries = new XYSeries(name);
+        for (int i = 0; i < vec.length; i++) {
+            vecSeries.add(i * h, vec[i]);
+        }
+
+        double phiSteps = 100;
+        double hh = 1.0 / phiSteps;
+        XYSeries phiSeries = new XYSeries("phi");
+        for (int i = 0; i < phiSteps; i++) {
+            phiSeries.add(i * hh, this.phi.applyAsDouble(i * hh, 1.0 - i * hh));
+        }
+
+        final XYSeriesCollection dataset = new XYSeriesCollection();
+        dataset.addSeries(vecSeries);
+        dataset.addSeries(phiSeries);
+
+        JFreeChart chart = ChartFactory.createXYLineChart(
+                name + " comparison",
+                "X",
+                "Y",
+                dataset,
+                PlotOrientation.VERTICAL,
+                true, true, false);
+
+        int width = 640;
+        int height = 480;
+        File file = new File(name + ".png");
+        try {
+            ChartUtils.saveChartAsJPEG(file, chart, width, height);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static String vecDeltaString(double[] vec1, double[] vec2) {
+        StringBuilder sb = new StringBuilder();
+        DecimalFormat df = new DecimalFormat("+0.000000;-0.000000");
+        for (int i = 0; i < vec1.length; i++) {
+            double norm = Math.abs(vec1[i] - vec2[i]);
+            sb.append(df.format(norm)).append('\n');
+        }
+        return sb.toString();
+    }
+
+    public static double[] sideDiagonal(double[][] mat) {
+        double[] result = new double[mat.length];
+        for (int i = 0; i < mat.length; i++) {
+            result[i] = mat[i][mat.length - i - 1];
+        }
+        return result;
+    }
+
+    public static String matrixToString(double[][] mat) {
+        StringBuilder sb = new StringBuilder();
+        DecimalFormat df = new DecimalFormat("+0.000000;-0.000000");
+        for (double[] line : mat) {
+            StringBuilder lsb = new StringBuilder();
+            for (double num : line) {
+                lsb.append(df.format(num)).append(", ");
+            }
+            sb.append(lsb).append('\n');
+        }
+        return sb.toString();
+    }
+
+    public static String vecToString(double[] vec) {
+        StringBuilder sb = new StringBuilder();
+        DecimalFormat df = new DecimalFormat("+0.000000;-0.000000");
+        for (double num : vec) {
+            sb.append(df.format(num)).append('\n');
+        }
+        return sb.toString();
+    }
+
+    double[][] createA(int steps) {
+        final double h = 1.0 / steps;
+
+        int matrixSize = 0;
+        for (int i = 0; i < steps - 1; i++) {
+            for (int j = 0; j < steps - 1; j++) {
+                if ((i + 1) * h + (j + 1) * h < 1.5 && (i + 1) * h + (j + 1) * h > 0.5) {
+                    matrixSize++;
+                }
+            }
+        }
+
+        int dim_a = steps - 1; //размер стороны сетки
+
+        double[][] result = new double[matrixSize][matrixSize];
+
+        for (int i = 0; i < matrixSize; i++) {
+            result[i][i] = 2 * b + 2 * a;
+        }
+
+        for (int i = 0; i < matrixSize - 1; i++) {
+            result[i][i + 1] = -b;
+        }
+
+        for (int i = 1; i < matrixSize; i++) {
+            result[i][i - 1] = -b;
+        }
+
+        for (int i = 0; i < matrixSize - dim_a; i++) {
+            result[i][i + dim_a] = -a;
+        }
+
+        for (int i = dim_a; i < matrixSize; i++) {
+            result[i][i - dim_a] = -a;
+        }
+
+        for (int i = 0; i < matrixSize; i++) {
+            for (int j = 0; j < matrixSize; j++) {
+                result[i][j] /= h * h;
+            }
+        }
+
+        return result;
+    }
+
+    static double[][] createVs(int steps) {
+        final int size = steps + 1;
+        final double h = 1.0 / steps;
+
+        double[][] result = new double[size][size];
+
+        for (int i = 0; i < size; i++) {
+            result[i][0] = 1;
+            result[0][i] = 1;
+            result[i][size - 1] = 1;
+            result[size - 1][i] = 1;
+            for (int j = 0; j < size; j++) {
+                if ((i) * h + (j) * h >= 1.5 || (i) * h + (j) * h <= 0.5) {
+                    result[i][j] = 1.0;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    double[] calculateF(int steps) {
+        final double h = 1.0 / steps;
+
+        double[] result = new double[this.matA.length];
+
+        int k = 0;
+        for (int xi = 1; xi < this.steps; xi++) {
+            for (int yi = 1; yi < this.steps; yi++) {
+                if (this.matVs[xi][yi] != 0) {
+                    continue;
+                }
+                result[k] = this.phi.applyAsDouble(h * xi, h * yi);
+//                if (this.matVs[xi - 1][yi] == 1)
+//                    result[k] += a * f.applyAsDouble(h * (xi - 1), h * yi);
+//                if (this.matVs[xi + 1][yi] == 1)
+//                    result[k] += a * f.applyAsDouble(h * (xi + 1), h * yi);
+//                if (this.matVs[xi][yi - 1] == 1)
+//                    result[k] += b * f.applyAsDouble(h * xi, h * (yi - 1));
+//                if (this.matVs[xi][yi + 1] == 1)
+//                    result[k] += b * f.applyAsDouble(h * xi, h * (yi + 1));
+                if (this.matVs[xi - 1][yi] == 1 ||
+                        this.matVs[xi + 1][yi] == 1 ||
+                        this.matVs[xi][yi - 1] == 1 ||
+                        this.matVs[xi][yi + 1] == 1) {
+                    result[k] += f.applyAsDouble(h * xi, h * yi);
+                }
+                k++;
+            }
+        }
+        return result;
+    }
+
+    double[][] transformResult(double[] vec) {
+        final int size = steps + 1;
+        double[][] result = new double[size][size];
+        int k = 0;
+        for (int xi = 1; xi < this.steps; xi++) {
+            for (int yi = 1; yi < this.steps; yi++) {
+                if (this.matVs[xi][yi] != 0) {
+                    continue;
+                }
+                result[xi][yi] = vec[k];
+                k++;
+            }
+        }
+        return result;
+    }
+
+    public double[][] phiMatrix() {
+        final int size = steps + 1;
+        double[][] result = new double[size][size];
+        final double h = 1.0 / steps;
+
+        int k = 0;
+        for (int xi = 1; xi < this.steps; xi++) {
+            for (int yi = 1; yi < this.steps; yi++) {
+                if (this.matVs[xi][yi] != 0) {
+                    continue;
+                }
+                result[xi][yi] = this.phi.applyAsDouble(xi * h, yi * h);
+                k++;
+            }
+        }
+        return result;
+    }
+
+    double[] applyFunc(double[] x) {
+        return Utils.azSubF(this.matA, x, this.vecF);
+    }
+
+    double applyFuncNorm(double[] x) {
+        return this.vectorNorm.applyAsDouble(applyFunc(x));
+    }
+
+    double[] minResidualMethod(double epsilon) {
+        double[] result = new double[this.matA.length];
+        Arrays.fill(result, 1.0);
+        while (applyFuncNorm(result) > epsilon) {
+            double[] yn = applyFunc(result);
+            double[] ay = Utils.matrixXvector(this.matA, yn);
+            double tau_n = Utils.dotProduct(yn, ay) / Utils.dotProduct(ay, ay);
+            for (int i = 0; i < result.length; i++) {
+                result[i] = result[i] - tau_n * yn[i];
+            }
+        }
+        return result;
+    }
+
+    double findMaxEigenValue(double[][] mat, double epsilon) {
+        double[] X_1 = new double[mat.length];
+        double[] X_0 = new double[mat.length];
+
+        for (int i = 0; i < X_1.length; i++) {
+            X_1[i] = 1;        // начальный вектор приближения
+            X_0[i] = X_1[i] + 1;
+        }
+        X_1[0] = 0;
+        X_1[1] = 0;
+
+        double lambda0 = -1;
+        double lambda1 = 1;
+        // степенной метод (Люстерника)
+        while (Math.abs(lambda1 - lambda0) > epsilon) {
+            lambda0 = lambda1;
+            X_0 = X_1;
+            X_1 = Utils.matrixXvector(mat, X_0);
+            lambda1 = Math.abs(Utils.dotProduct(X_0, X_1) / Utils.dotProduct(X_0, X_0));
+            // нормировка вектора
+            // необходима из-за слишком больших значений
+            // выходящих за пределы double
+            double norm = vectorNorm.applyAsDouble(X_1);
+            for (int i = 0; i < X_1.length; i++) {
+                X_1[i] /= norm;
+            }
+        }
+
+        return lambda1;
+    }
+
+    double[][] createB(double lambda) {
+        final int size = this.matA.length;
+        double[][] result = new double[size][size];
+        for (int i = 0; i < this.matA.length; i++) {
+            for (int j = 0; j < this.matA.length; j++)
+                if (this.matA[i][j] != 0)
+                    result[i][j] = -this.matA[i][j];
+            result[i][i] += lambda + 1;
+        }
+        return result;
+    }
+
+    double[] richardsonMethod(double lambdaMax, double lambdaMin, double epsilon) {
+        double[] X_1 = new double[this.matA.length];
+        double[] X_0 = new double[this.matA.length];
+
+        final double tau_0 = 2 / (lambdaMin + lambdaMax);
+        final double theta = lambdaMin / lambdaMax;
+        final double ro_0 = (1 - theta) / (1 + theta);
+        final int n = (int) (Math.log(2 / epsilon) / (2 * Math.sqrt(theta))) + 1;
+
+        //начальный вектор приближений
+        for (int i = 0; i < X_1.length; i++) {
+            X_1[i] = 1;
+        }
+
+
+        //метод Ричардсона
+        for (int k = 0; k <= n; k++) {
+            X_0 = X_1;
+            X_1 = Utils.azSubF(this.matA, X_0, this.vecF);
+            double tau_k = tau_0 / (1 + ro_0 * this.vk.applyAsDouble(n, k + 1));
+            for (int i = 0; i < X_1.length; i++)
+                X_1[i] = -X_1[i] * tau_k + X_0[i];
+        }
+
+        return X_1;
+    }
+}
